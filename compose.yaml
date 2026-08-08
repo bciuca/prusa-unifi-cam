@@ -1,0 +1,38 @@
+services:
+  bridge:
+    build: .
+    restart: unless-stopped
+    init: true
+    secrets:
+      - stream_url
+      - prusa_token
+    volumes:
+      - fingerprint:/data
+    environment:
+      STREAM_URL_FILE: /run/secrets/stream_url
+      PRUSA_TOKEN_FILE: /run/secrets/prusa_token
+      FINGERPRINT_FILE: /data/fingerprint
+      SNAPSHOT_INTERVAL: "10"
+    ports:
+      - "${HEALTH_BIND_ADDRESS:-127.0.0.1}:${HEALTH_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m,uid=10001,gid=10001
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+secrets:
+  stream_url:
+    file: ./secrets/stream_url
+  prusa_token:
+    file: ./secrets/prusa_token
+volumes:
+  fingerprint:
