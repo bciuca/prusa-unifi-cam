@@ -14,6 +14,7 @@ def safe_error(exc: BaseException) -> str:
         "AuthenticationError": "Prusa authentication failed",
         "RateLimitError": "Prusa rate limit reached",
         "RedirectError": "upload redirect refused",
+        "PrinterProbeError": "printer availability check failed",
     }
     if name == "CaptureError":
         reason = getattr(exc, "reason", "capture")

@@ -14,21 +14,33 @@ class Status:
     last_error: str | None = None
     consecutive_failures: int = 0
     total_failures: int = 0
+    mode: str = "starting"
+    printer_on: bool | None = None
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def success(self) -> None:
         with self.lock:
             self.last_success, self.last_error, self.consecutive_failures = time.monotonic(), None, 0
+            self.mode, self.printer_on = "publishing", True
 
-    def failure(self, message: str) -> None:
+    def idle(self) -> None:
+        with self.lock:
+            self.last_error, self.consecutive_failures = None, 0
+            self.mode, self.printer_on = "idle_printer_off", False
+
+    def failure(self, message: str, printer_on: bool | None = None) -> None:
         with self.lock:
             self.last_error = message
             self.consecutive_failures += 1
             self.total_failures += 1
+            self.mode = "degraded"
+            if printer_on is not None:
+                self.printer_on = printer_on
 
     def snapshot(self) -> dict:
         with self.lock:
-            return {"ready": self.last_success is not None and self.consecutive_failures == 0,
+            ready = self.mode in {"idle_printer_off", "publishing"} and self.consecutive_failures == 0
+            return {"ready": ready, "mode": self.mode, "printer_on": self.printer_on,
                     "last_error": self.last_error, "consecutive_failures": self.consecutive_failures,
                     "total_failures": self.total_failures}
 

@@ -77,11 +77,21 @@ cd prusa-unifi-cam
 
 ### Build and start
 
-Set your port, 8080 is the default.
+Set the printer hostname or IP address and the health port. The printer should
+have a DHCP reservation or static address. Port 8080 is the default health port.
 
 ```sh
-printf '%s\n' 'HEALTH_PORT=8080' > .env
+printf '%s\n' \
+  'PRINTER_HOST=YOUR_PRINTER_HOST_OR_IP' \
+  'HEALTH_PORT=8080' \
+  > .env
 ```
+
+The bridge considers the printer on when it accepts a local TCP connection on
+its PrusaLink port, which defaults to port 80. If PrusaLink uses a different
+port, also add `PRINTER_PORT=YOUR_PORT` to `.env`. Optional probe tuning values
+are `PRINTER_PROBE_TIMEOUT` (default 2 seconds) and
+`PRINTER_OFF_POLL_INTERVAL` (default 10 seconds, minimum 5).
 
 Build and start the service. This may take several minutes for the first build depending on your machine.
 
@@ -99,11 +109,16 @@ curl --fail http://127.0.0.1:YOUR_HEALTH_PORT/healthz
 curl http://127.0.0.1:YOUR_HEALTH_PORT/readyz
 ```
 
-The expected readiness response is:
+While the printer is off, the expected readiness response is:
 
 ```json
-{"ready":true,"last_error":null,"consecutive_failures":0,"total_failures":0}
+{"ready":true,"mode":"idle_printer_off","printer_on":false,"last_error":null,"consecutive_failures":0,"total_failures":0}
 ```
+
+After an upload succeeds, `mode` is `"publishing"` and `printer_on` is
+`true`. A probe is made before capture and again immediately before upload, so
+the bridge never opens the camera stream or starts an upload based on a cached
+printer state.
 
 The image builds for AMD64 and ARM64 wherever the corresponding `python:3.13-slim-bookworm` image is available.
 
@@ -137,7 +152,18 @@ ffmpeg -hide_banner -loglevel error -rtsp_transport tcp -i 'rtsps://REDACTED' -f
 
 ## Operation and acceptance
 
-After `/readyz` reports `"ready":true`, confirm the UniFi Protect camera image updates in Prusa Connect about every 10 seconds. Successful logs should appear at the same cadence. `docker compose stop` immediately stops new captures/uploads and does not alter either endpoint. Logs contain only categories such as `stream capture failed`, `Prusa authentication failed`, or `Prusa rate limit reached`. No URLs, credentials, headers, tokens, and image data are logged.
+With the printer off, confirm `/readyz` reports `"mode":"idle_printer_off"`
+and that no `snapshot uploaded` logs appear. Turn the printer on and confirm the
+image begins updating in Prusa Connect about every 10 seconds without restarting
+the bridge. Turn it off again and confirm publishing pauses after
+`printer unavailable; snapshot publishing paused`. A single already-approved
+upload remains theoretically possible if power is removed immediately after the
+final pre-upload probe.
+
+`docker compose stop` immediately stops new captures/uploads and does not alter
+either endpoint. Logs contain only categories such as `stream capture failed`,
+`Prusa authentication failed`, or `Prusa rate limit reached`. No printer or
+stream host, URLs, credentials, headers, tokens, and image data are logged.
 
 The health port is published only on host loopback. The container runs as UID 10001 with a read-only root, no Linux capabilities, no-new-privileges, bounded CPU/memory/PIDs, and a small in-memory `/tmp`. Secrets are read-only Compose mounts and excluded from the build context. The snapshot itself remains in process memory.
 
@@ -146,7 +172,7 @@ For added peace of mind, you can restrict the server bridge via your firewall so
 ## Tests
 
 ```sh
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 docker compose config
 ```
 

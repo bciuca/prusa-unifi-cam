@@ -13,6 +13,10 @@ services:
       PRUSA_TOKEN_FILE: /run/secrets/prusa_token
       FINGERPRINT_FILE: /data/fingerprint
       SNAPSHOT_INTERVAL: "10"
+      PRINTER_HOST: "${PRINTER_HOST:-}"
+      PRINTER_PORT: "${PRINTER_PORT:-80}"
+      PRINTER_PROBE_TIMEOUT: "${PRINTER_PROBE_TIMEOUT:-2}"
+      PRINTER_OFF_POLL_INTERVAL: "${PRINTER_OFF_POLL_INTERVAL:-10}"
     ports:
       - "${HEALTH_BIND_ADDRESS:-127.0.0.1}:${HEALTH_PORT:-8080}:8080"
     read_only: true

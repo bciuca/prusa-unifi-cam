@@ -8,19 +8,20 @@ import unittest
 from http.client import HTTPConnection
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from bridge.capture import CaptureError, _classify, output_size
-from bridge.config import Config
-from bridge.health import Status, serve
-from bridge.redact import safe_error, safe_stream_label
-from bridge.upload import AuthenticationError, RateLimitError, RedirectError, UploadError, upload_snapshot
+from src.capture import CaptureError, _classify, output_size
+from src.config import Config
+from src.health import Status, serve
+from src.redact import safe_error, safe_stream_label
+from src.upload import AuthenticationError, RateLimitError, RedirectError, UploadError, upload_snapshot
 
 
 class ConfigTests(unittest.TestCase):
     def test_validation_and_minimum_interval(self):
-        Config("rtsps://user:pass@cam/live", "token", "fp").validate()
-        with self.assertRaises(ValueError): Config("http://cam/live", "token", "fp").validate()
-        with self.assertRaises(ValueError): Config("rtsp://cam/live", "token", "fp", interval=9).validate()
+        Config("rtsps://user:pass@cam/live", "token", "fp", printer_host="printer.local").validate()
+        with self.assertRaises(ValueError):
+            Config("http://cam/live", "token", "fp", printer_host="printer.local").validate()
+        with self.assertRaises(ValueError):
+            Config("rtsp://cam/live", "token", "fp", printer_host="printer.local", interval=9).validate()
 
     def test_stable_fingerprint(self):
         with tempfile.TemporaryDirectory() as d:
@@ -28,7 +29,7 @@ class ConfigTests(unittest.TestCase):
                 with open(os.path.join(d, name), "w") as secret_file:
                     secret_file.write(value)
             env = {"STREAM_URL_FILE": os.path.join(d,"stream"), "PRUSA_TOKEN_FILE": os.path.join(d,"token"),
-                   "FINGERPRINT_FILE": os.path.join(d,"fingerprint")}
+                   "FINGERPRINT_FILE": os.path.join(d,"fingerprint"), "PRINTER_HOST": "printer.local"}
             with patch.dict(os.environ, env, clear=True): a = Config.from_env()
             with patch.dict(os.environ, env, clear=True): b = Config.from_env()
             self.assertEqual(a.fingerprint, b.fingerprint)
@@ -69,7 +70,7 @@ class UploadTests(unittest.TestCase):
         cases = [(200,None),(204,None),(401,AuthenticationError),(429,RateLimitError),(302,RedirectError),(500,UploadError)]
         for status, error in cases:
             FakeConnection.status = status
-            with patch("bridge.upload.http.client.HTTPSConnection", FakeConnection):
+            with patch("src.upload.http.client.HTTPSConnection", FakeConnection):
                 if error:
                     with self.assertRaises(error): upload_snapshot("https://example.test/c", "tok", "fp", b"jpg", 1)
                 else: upload_snapshot("https://example.test/c", "tok", "fp", b"jpg", 1)
@@ -80,8 +81,25 @@ class HealthTests(unittest.TestCase):
         try:
             conn = HTTPConnection("127.0.0.1", server.server_port)
             conn.request("GET", "/healthz"); self.assertEqual(conn.getresponse().status, 200)
-            conn.request("GET", "/readyz"); self.assertEqual(conn.getresponse().status, 503)
-            status.success(); conn.request("GET", "/readyz"); self.assertEqual(conn.getresponse().status, 200)
+            conn.request("GET", "/readyz")
+            starting = json.loads(conn.getresponse().read())
+            self.assertEqual((starting["ready"], starting["mode"], starting["printer_on"]),
+                             (False, "starting", None))
+            status.idle(); conn.request("GET", "/readyz")
+            idle = json.loads(conn.getresponse().read())
+            self.assertEqual((idle["ready"], idle["mode"], idle["printer_on"]),
+                             (True, "idle_printer_off", False))
+            status.success(); conn.request("GET", "/readyz")
+            publishing = json.loads(conn.getresponse().read())
+            self.assertEqual((publishing["ready"], publishing["mode"], publishing["printer_on"]),
+                             (True, "publishing", True))
+            status.failure("snapshot upload failed", printer_on=True)
+            conn.request("GET", "/readyz")
+            degraded_response = conn.getresponse()
+            degraded = json.loads(degraded_response.read())
+            self.assertEqual(degraded_response.status, 503)
+            self.assertEqual((degraded["ready"], degraded["mode"], degraded["printer_on"]),
+                             (False, "degraded", True))
         finally: server.shutdown(); server.server_close()
 
 if __name__ == "__main__": unittest.main()
